@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned to the same ruff as the package's dev extra so `just check`
+      # locally matches CI exactly.
+      - uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.16.4"
+          src: python/mail_actions
+      - uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.16.4"
+          src: python/mail_actions
+          args: format --check
+
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python/mail_actions
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.3"
+          enable-cache: true
+          cache-dependency-glob: python/mail_actions/uv.lock
+
+      - name: Install (exactly as locked)
+        run: uv sync --frozen --python 3.12 --extra test
+
+      - name: Tests with coverage
+        run: uv run --frozen coverage run --source=mail_actions -m pytest
+
+      - name: Coverage report
+        run: uv run --frozen coverage report --precision=2
+
+      - name: Coverage ratchet
+        run: |
+          current=$(uv run --frozen coverage report --format=total --precision=2)
+          python ../../scripts/coverage_gate.py "$current" ../../.github/coverage-baseline.txt
