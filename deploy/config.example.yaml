@@ -1,0 +1,12 @@
+# Mounted at /etc/mail-actions/config.yaml (or MAIL_ACTIONS_CONFIG).
+mailboxes:
+  - name: personal            # the <mailbox> part of corpus.id/v1 refs
+    kind: gmail
+    # Credentials come from <prefix>_CLIENT_ID, _CLIENT_SECRET, _REFRESH_TOKEN.
+    credentials_env_prefix: MAIL_ACTIONS_GMAIL_PERSONAL
+label: linear                 # the tag `file` applies
+groups: [Banking, Insurance, Travel, Receipts]   # `label` may apply Auto/<group>
+caps:
+  actions_per_day: 200        # MAIL_ACTIONS_ACTIONS_PER_DAY overrides
+  filter_changes_per_week: 10 # MAIL_ACTIONS_FILTER_CHANGES_PER_WEEK overrides
+protected_path: /etc/mail-actions/protected.yaml   # MAIL_ACTIONS_PROTECTED overrides
