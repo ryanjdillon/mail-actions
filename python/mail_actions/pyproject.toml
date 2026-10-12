@@ -1,0 +1,50 @@
+[project]
+name = "mail-actions"
+version = "0.1.0"
+description = "Narrow, provider-neutral MCP service that files and labels mail without reading it"
+requires-python = ">=3.12"
+license = "MPL-2.0"
+dependencies = [
+    "httpx>=0.27",
+    "click>=8.1",
+    "pyyaml>=6.0",
+    # Pinned to the 1.x SDK: it ships FastMCP (mcp.server.fastmcp) with the
+    # streamable-HTTP transport. 2.0 restructured the API and dropped that path.
+    "mcp>=1.9,<2",
+]
+
+[project.optional-dependencies]
+# Only for `mail-actions consent`, run once on a workstation with a browser.
+consent = [
+    "google-auth-oauthlib>=1.2",
+]
+test = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+]
+dev = [
+    "google-auth-oauthlib>=1.2",
+    # Pinned to match CI so `just check` catches exactly what CI does.
+    "ruff==0.16.4",
+]
+
+[project.scripts]
+mail-actions = "mail_actions.cli:main"
+
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mail_actions"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+extend-select = ["I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
