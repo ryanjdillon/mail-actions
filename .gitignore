@@ -1,0 +1,18 @@
+# OAuth client secrets and local environment: never committed.
+client_secret*.json
+.env
+
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+uv.lock
+result
