@@ -1,0 +1,10 @@
+# The protected-sender list: a secret, mounted read-only. Optional; while it is
+# missing or empty, `file` tags but never archives. Entries are addresses or
+# domains. These values are placeholders.
+family:
+  - parent@example.com
+  - sibling@example.org
+tax:
+  - tax.example.net
+legal:
+  - counsel@lawfirm.example
