@@ -4,7 +4,7 @@ Callers (an LLM agent acting on untrusted mail) may pass anything. Before a
 provider is touched, a call must name a well-formed ref in a configured mailbox,
 stay within the caps, and pass the protected check; filter rules must have an
 approved shape. Each call writes exactly one audit line, which carries a hashed
-ref and never the ref itself.
+ref and never the ref itself, and records its metrics from the same event.
 
 Results describe what was done to which ref. They never carry message content:
 no provider method returns any.
@@ -35,6 +35,7 @@ from .provider import (
     ServerRule,
     ServerRules,
 )
+from .telemetry import Metrics
 
 log = logging.getLogger(__name__)
 audit_log = logging.getLogger("mail_actions.audit")
@@ -123,12 +124,16 @@ class _Window:
             raise _Refused("cap_exceeded")
         self._events.extend([now] * n)
 
+    def used(self, now: datetime) -> int:
+        """Events counted in the window ending at *now*."""
+        return sum(1 for t in self._events if now - t < self.span)
+
 
 class MailboxActions:
     """File, unfile and label messages, and converge server-side filter rules.
 
     Collaborators are injected: *providers* by mailbox name, the *protected* list
-    source, the *clock* and the *audit* sink.
+    source, the *clock*, the *audit* sink and the *metrics* recorder.
     """
 
     def __init__(
@@ -139,6 +144,7 @@ class MailboxActions:
         protected: ProtectedFile,
         clock: Callable[[], datetime] = utcnow,
         audit: Callable[[Mapping[str, Any]], None] = emit_audit,
+        metrics: Metrics | None = None,
     ) -> None:
         self._config = config
         self._providers = dict(providers)
@@ -153,6 +159,8 @@ class MailboxActions:
         # The protected list whose senders' existing mail each mailbox has had
         # tagged. ``file`` archives only while this matches the current list.
         self._backfilled: dict[str, Protected] = {}
+        self._metrics = metrics or Metrics()
+        self._metrics.watch_caps(self._cap_usage)
 
     # --- message actions ---------------------------------------------------
 
@@ -247,7 +255,8 @@ class MailboxActions:
             result = SyncResult(ok=False, mailbox=str(mailbox)[:32], reason=exc.reason)
         except ProviderError as exc:
             result = SyncResult(ok=False, mailbox=mailbox, reason=f"provider:{exc.reason}")
-        self._audit(
+        self._record(
+            start,
             {
                 "event": "mail_actions.tool_call",
                 "tool": "sync_filters",
@@ -259,8 +268,7 @@ class MailboxActions:
                 "deleted": result.deleted,
                 "refused": len(result.refused),
                 "outcome": "ok" if result.ok else f"refused:{result.reason}",
-                "duration_ms": round((time.perf_counter() - start) * 1000, 1),
-            }
+            },
         )
         return result
 
@@ -277,23 +285,26 @@ class MailboxActions:
         except ConfigError:
             return
         for name, provider in self._providers.items():
+            start = time.perf_counter()
             outcome = "ok"
             try:
                 self._protect_existing(name, provider, protected)
             except ProviderError as exc:
                 outcome = f"refused:provider:{exc.reason}"
-            self._audit(
+            self._record(
+                start,
                 {
                     "event": "mail_actions.tool_call",
                     "tool": "ensure_protected",
                     "principal": principal,
                     "mailbox": name,
                     "outcome": outcome,
-                }
+                },
             )
 
     def capabilities(self, *, principal: str = "unknown") -> Status:
         """What each mailbox supports, and whether ``file`` archives right now."""
+        start = time.perf_counter()
         try:
             protected = self._protected.current()
             state = "empty" if protected.empty else "ok"
@@ -307,18 +318,39 @@ class MailboxActions:
             protected_list=state,
             mailboxes={name: p.capabilities() for name, p in self._providers.items()},
         )
-        self._audit(
+        self._record(
+            start,
             {
                 "event": "mail_actions.tool_call",
                 "tool": "capabilities",
                 "principal": principal,
                 "protected_list": state,
                 "outcome": "ok",
-            }
+            },
         )
         return status
 
     # --- internals ---------------------------------------------------------
+
+    def _record(self, start: float, event: dict[str, Any]) -> None:
+        """Write a call's audit line and its metrics, from the one event."""
+        duration_ms = (time.perf_counter() - start) * 1000
+        event["duration_ms"] = round(duration_ms, 1)
+        self._audit(event)
+        self._metrics.tool_call(
+            tool=event["tool"],
+            outcome=event["outcome"],
+            principal=event["principal"],
+            duration_ms=duration_ms,
+        )
+
+    def _cap_usage(self) -> dict[str, int]:
+        now = self._clock()
+        with self._lock:
+            return {
+                "actions": self._actions.used(now),
+                "filter_changes": self._filter_changes.used(now),
+            }
 
     def _ok(
         self,
@@ -383,12 +415,11 @@ class MailboxActions:
             "principal": principal,
             "ref": hash_ref(ref),
             "outcome": result.action if result.ok else f"refused:{result.reason}",
-            "duration_ms": round((time.perf_counter() - start) * 1000, 1),
         }
         if "group" in extra:
             group = extra["group"]
             event["group"] = group if group in self._config.groups else None
-        self._audit(event)
+        self._record(start, event)
         return result
 
     @staticmethod

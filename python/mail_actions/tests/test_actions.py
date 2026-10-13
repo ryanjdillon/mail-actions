@@ -1,7 +1,7 @@
 import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from unittest.mock import call, create_autospec
+from unittest.mock import ANY, call, create_autospec
 
 import pytest
 
@@ -20,6 +20,7 @@ from mail_actions.provider import (
     ServerRules,
     TagModel,
 )
+from mail_actions.telemetry import Metrics
 
 REF = "gmail:personal::18c2f0a1b2c3d4e5"
 MSG = parse_ref(REF)
@@ -83,9 +84,19 @@ def audit():
 
 
 @pytest.fixture
-def actions(config, provider, protected, clock, audit):
+def metrics():
+    return create_autospec(Metrics, instance=True)
+
+
+@pytest.fixture
+def actions(config, provider, protected, clock, audit, metrics):
     return MailboxActions(
-        config, {"personal": provider}, protected=protected, clock=clock, audit=audit
+        config,
+        {"personal": provider},
+        protected=protected,
+        clock=clock,
+        audit=audit,
+        metrics=metrics,
     )
 
 
@@ -352,13 +363,14 @@ def test_label_outside_the_allow_list_is_refused(actions, provider, group):
 # --- caps -------------------------------------------------------------------
 
 
-def test_daily_cap_holds_and_rolls(config, provider, protected, clock, audit):
+def test_daily_cap_holds_and_rolls(config, provider, protected, clock, audit, metrics):
     actions = MailboxActions(
         replace(config, caps=Caps(actions_per_day=2)),
         {"personal": provider},
         protected=protected,
         clock=clock,
         audit=audit,
+        metrics=metrics,
     )
     assert actions.label(REF, "Banking").ok
     assert actions.unfile(REF).ok
@@ -369,13 +381,14 @@ def test_daily_cap_holds_and_rolls(config, provider, protected, clock, audit):
     assert actions.file(REF).ok
 
 
-def test_refused_arguments_do_not_spend_the_cap(config, provider, protected, clock, audit):
+def test_refused_arguments_do_not_spend_the_cap(config, provider, protected, clock, audit, metrics):
     actions = MailboxActions(
         replace(config, caps=Caps(actions_per_day=1)),
         {"personal": provider},
         protected=protected,
         clock=clock,
         audit=audit,
+        metrics=metrics,
     )
     actions.file("not-a-ref")
     actions.label(REF, "Nope")
@@ -399,6 +412,87 @@ def test_audit_carries_a_hashed_ref_never_the_raw_one(actions, audit):
     assert (first["tool"], first["principal"], first["outcome"]) == ("file", "orchestrator", "file")
     assert events(audit)[1]["group"] == "Banking"
     assert events(audit)[2]["group"] is None  # an unlisted group is not echoed
+
+
+# --- metrics ----------------------------------------------------------------
+
+
+def outcomes(metrics):
+    return [c.kwargs["outcome"] for c in metrics.tool_call.call_args_list]
+
+
+def test_a_call_records_its_metrics(actions, metrics):
+    actions.file(REF, principal="orchestrator")
+
+    metrics.tool_call.assert_called_once_with(
+        tool="file", outcome="file", principal="orchestrator", duration_ms=ANY
+    )
+    assert metrics.tool_call.call_args.kwargs["duration_ms"] >= 0
+
+
+def test_protected_refusal_is_recorded(actions, provider, metrics):
+    provider.get_tags.return_value = frozenset({"INBOX", "Family"})
+
+    actions.file(REF)
+
+    assert outcomes(metrics) == ["refused:protected"]
+
+
+def test_label_only_is_recorded(actions, protected, metrics):
+    protected.current.return_value = Protected()
+
+    actions.file(REF)
+
+    assert outcomes(metrics) == ["label_only"]
+
+
+def test_internal_error_is_recorded(actions, provider, metrics):
+    provider.get_tags.side_effect = RuntimeError("secret detail")
+
+    actions.file(REF)
+
+    assert outcomes(metrics) == ["refused:internal"]
+
+
+def test_every_tool_records_the_audit_outcome(actions, provider, audit, metrics):
+    provider.get_rules.side_effect = ProviderError("403")
+
+    actions.ensure_protected()
+    actions.capabilities(principal="orchestrator")
+    actions.sync_filters("personal", [bank()], principal="orchestrator")
+    actions.label(REF, "Nope", principal="orchestrator")
+    actions.unfile(REF, principal="orchestrator")
+
+    recorded = [
+        (c.kwargs["tool"], c.kwargs["outcome"], c.kwargs["principal"])
+        for c in metrics.tool_call.call_args_list
+    ]
+    assert recorded == [(e["tool"], e["outcome"], e["principal"]) for e in events(audit)]
+    assert recorded == [
+        ("ensure_protected", "refused:provider:403", "startup"),
+        ("capabilities", "ok", "orchestrator"),
+        ("sync_filters", "refused:provider:403", "orchestrator"),
+        ("label", "refused:group_not_allowed", "orchestrator"),
+        ("unfile", "unfile", "orchestrator"),
+    ]
+    assert all("duration_ms" in e for e in events(audit))
+
+
+def test_cap_usage_is_watched_and_rolls(actions, provider, clock, metrics):
+    usage = metrics.watch_caps.call_args.args[0]
+    assert usage() == {"actions": 0, "filter_changes": 0}
+
+    actions.file(REF)
+    actions.label(REF, "Banking")
+    provider.get_rules.return_value = []
+    actions.sync_filters("personal", [bank()])
+
+    assert usage() == {"actions": 2, "filter_changes": 1}
+
+    clock.return_value = T0 + timedelta(days=1)
+    assert usage() == {"actions": 0, "filter_changes": 1}
+    clock.return_value = T0 + timedelta(days=7)
+    assert usage() == {"actions": 0, "filter_changes": 0}
 
 
 def test_hash_ref_drops_a_source_that_is_not_shaped_like_one():
@@ -600,7 +694,7 @@ def test_protected_rule_overrides_a_managed_rule_for_the_same_sender(actions, pr
 
 
 def test_weekly_filter_cap_holds_but_exempts_protected_rules(
-    config, provider, protected, clock, audit
+    config, provider, protected, clock, audit, metrics
 ):
     actions = MailboxActions(
         replace(config, caps=Caps(filter_changes_per_week=2)),
@@ -608,6 +702,7 @@ def test_weekly_filter_cap_holds_but_exempts_protected_rules(
         protected=protected,
         clock=clock,
         audit=audit,
+        metrics=metrics,
     )
     provider.get_rules.return_value = []  # two protected creates: exempt
 

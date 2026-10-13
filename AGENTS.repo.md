@@ -59,3 +59,4 @@ Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`,
 | the Gmail request shapes or scopes | `docs/providers/gmail.md` |
 | a refusal rule, cap or the audit line | `docs/threat-model.md` |
 | the ref codec or `tests/vectors/message_ids.json` | `docs/message-ids.md` |
+| a metric, its labels or an outcome value | `docs/observability.md` |

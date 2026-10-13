@@ -6,6 +6,7 @@ from unittest.mock import create_autospec
 import httpx
 import pytest
 from click.testing import CliRunner
+from opentelemetry.sdk.metrics import MeterProvider
 
 from mail_actions import cli
 from mail_actions.cli import Wiring, main
@@ -62,13 +63,19 @@ def consent_flow():
 
 
 @pytest.fixture
-def wiring(open_provider, check_credentials, run_server, consent_flow):
+def configure_telemetry():
+    return create_autospec(cli.configure, return_value=None)
+
+
+@pytest.fixture
+def wiring(open_provider, check_credentials, run_server, consent_flow, configure_telemetry):
     return Wiring(
         env={},
         open_provider=open_provider,
         check_credentials=check_credentials,
         run_server=run_server,
         consent_flow=consent_flow,
+        configure_telemetry=configure_telemetry,
     )
 
 
@@ -88,6 +95,20 @@ def test_serve_opens_mailboxes_converges_and_runs(
     provider.create_rule.assert_called_once()  # the protected rule
     server = run_server.call_args.args[0]
     assert (server.name, server.settings.port) == ("mail-actions", 9100)
+
+
+def test_serve_exports_metrics_and_flushes_them_on_exit(
+    wiring, config_path, configure_telemetry, run_server
+):
+    meter_provider = create_autospec(MeterProvider, instance=True)
+    configure_telemetry.return_value = meter_provider
+    run_server.side_effect = KeyboardInterrupt
+
+    result = CliRunner().invoke(main, ["--config", str(config_path), "serve"], obj=wiring)
+
+    assert result.exit_code == 1
+    configure_telemetry.assert_called_once_with(wiring.env)
+    meter_provider.shutdown.assert_called_once_with()
 
 
 def test_serve_fails_cleanly_when_a_mailbox_cannot_open(

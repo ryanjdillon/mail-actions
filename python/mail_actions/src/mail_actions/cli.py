@@ -12,11 +12,13 @@ from typing import Any
 import click
 import httpx
 from mcp.server.fastmcp import FastMCP
+from opentelemetry.sdk.metrics import MeterProvider
 
 from .actions import MailboxActions
 from .config import DEFAULT_CONFIG, Config, ConfigError, Mailbox, ProtectedFile, load_config
 from .gmail import SCOPES, Credentials, GmailAdapter, gmail_client, verify_credentials
 from .provider import Provider, ProviderError
+from .telemetry import configure
 
 
 def open_provider(
@@ -67,6 +69,7 @@ class Wiring:
     check_credentials: Callable[[Mailbox, Mapping[str, str]], frozenset[str]] = check_credentials
     run_server: Callable[[FastMCP], None] = run_server
     consent_flow: Callable[[str, Sequence[str]], Any] = consent_flow
+    configure_telemetry: Callable[[Mapping[str, str]], MeterProvider | None] = configure
 
 
 @click.group()
@@ -107,9 +110,15 @@ def serve(ctx: click.Context, host: str, port: int) -> None:
         providers = {m.name: wiring.open_provider(m, config, wiring.env) for m in config.mailboxes}
     except (ConfigError, ProviderError) as exc:
         raise click.ClickException(f"cannot open mailboxes: {exc}") from exc
-    actions = MailboxActions(config, providers, protected=ProtectedFile(config.protected_path))
-    actions.ensure_protected()
-    wiring.run_server(build_server(actions, host=host, port=port))
+    # First, so every call from ensure_protected on is exported.
+    meter_provider = wiring.configure_telemetry(wiring.env)
+    try:
+        actions = MailboxActions(config, providers, protected=ProtectedFile(config.protected_path))
+        actions.ensure_protected()
+        wiring.run_server(build_server(actions, host=host, port=port))
+    finally:
+        if meter_provider is not None:
+            meter_provider.shutdown()
 
 
 @main.command()

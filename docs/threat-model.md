@@ -23,7 +23,7 @@ with write access to the mailbox.
 | Filters are constrained | Only `from_domain`, `from_addr` or `list_id` → tag. Skipping the inbox requires a bulk/newsletter/promotional category, a non-protected sender and a configured protected list. Protected filters come only from the protected list. |
 | Hand-made filters are untouched | Only filters with the service's marker and exactly a shape it writes are managed; any other filter is never changed or deleted. |
 | Volume is bounded | 200 actions per day and 10 approved-filter changes per week, plus the gateway's rate limit. |
-| Every call is audited | One JSON line per call with principal, tool, hashed ref and outcome. Raw refs and rules are never logged. |
+| Every call is audited | One JSON line per call with principal, tool, hashed ref, outcome and duration. Raw refs and rules are never logged. The same event feeds the metrics ([observability.md](observability.md)), whose labels are only tool, outcome and a bounded principal. |
 
 ## What an attacker who controls an email can do
 
