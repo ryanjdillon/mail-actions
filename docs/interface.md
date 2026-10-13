@@ -146,6 +146,7 @@ See `deploy/config.example.yaml` and `deploy/protected.example.yaml`.
 | caps | `caps:` in the config; `MAIL_ACTIONS_ACTIONS_PER_DAY` / `MAIL_ACTIONS_FILTER_CHANGES_PER_WEEK` override |
 | credentials | `<credentials_env_prefix>_{CLIENT_ID,CLIENT_SECRET,REFRESH_TOKEN}` |
 | bind | `--host`/`--port` or `MAIL_ACTIONS_HOST`/`MAIL_ACTIONS_PORT` (default `0.0.0.0:9000`) |
+| metrics | `OTEL_EXPORTER_OTLP_ENDPOINT` turns on OTLP export; unset, nothing is exported ([observability.md](observability.md)) |
 
 ## CLI
 

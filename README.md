@@ -25,6 +25,10 @@ mail-actions check     # config, protected list, credentials; reads no mail
 mail-actions serve     # MCP over streamable HTTP on :9000/mcp
 ```
 
+Metrics (calls by tool, outcome and principal; latency; cap usage) are exported
+over OTLP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; see
+[docs/observability.md](docs/observability.md).
+
 Documentation: [docs/index.md](docs/index.md). Contributing: `nix develop`,
 `just setup`, `just check`.
 
