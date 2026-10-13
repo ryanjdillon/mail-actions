@@ -11,6 +11,11 @@ dependencies = [
     # Pinned to the 1.x SDK: it ships FastMCP (mcp.server.fastmcp) with the
     # streamable-HTTP transport. 2.0 restructured the API and dropped that path.
     "mcp>=1.9,<2",
+    # Metrics over OTLP/gRPC; a no-op until OTEL_EXPORTER_OTLP_ENDPOINT is set.
+    # Floored at 1.27, past the first API with histogram bucket advisories (1.23).
+    "opentelemetry-api>=1.27",
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.27",
 ]
 
 [project.optional-dependencies]
