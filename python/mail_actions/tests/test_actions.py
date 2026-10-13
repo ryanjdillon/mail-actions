@@ -749,6 +749,19 @@ def test_sync_reports_provider_errors(actions, provider, audit):
     assert event["outcome"] == "refused:provider:rateLimitExceeded"
 
 
+def test_sync_fails_closed_on_an_unexpected_error(actions, provider, audit, metrics, caplog):
+    provider.get_rules.side_effect = RuntimeError("secret detail")
+
+    result = actions.sync_filters("personal", [bank()], principal="orchestrator")
+
+    assert (result.ok, result.mailbox, result.reason) == (False, "personal", "internal")
+    event = events(audit)[0]
+    assert event["outcome"] == "refused:internal"
+    assert outcomes(metrics) == ["refused:internal"]
+    assert "secret detail" not in json.dumps(event) + repr(result)
+    assert any(r.exc_info and r.name == "mail_actions.actions" for r in caplog.records)
+
+
 # --- ensure_protected --------------------------------------------------------
 
 
@@ -777,12 +790,30 @@ def test_ensure_protected_records_provider_errors(actions, provider, audit):
     assert events(audit)[0]["outcome"] == "refused:provider:403"
 
 
-def test_ensure_protected_skips_an_invalid_list(actions, provider, protected):
+def test_ensure_protected_skips_an_invalid_list(actions, provider, protected, audit, metrics):
     protected.current.side_effect = ConfigError("bad")
 
     actions.ensure_protected()
 
     provider.get_rules.assert_not_called()
+    (event,) = events(audit)
+    assert (event["mailbox"], event["outcome"]) == (None, "refused:protected_list_invalid")
+    assert outcomes(metrics) == ["refused:protected_list_invalid"]
+
+
+def test_ensure_protected_fails_closed_on_an_unexpected_error(
+    actions, provider, audit, metrics, caplog
+):
+    provider.get_rules.side_effect = RuntimeError("secret detail")
+
+    actions.ensure_protected()
+
+    (event,) = events(audit)
+    assert (event["mailbox"], event["outcome"]) == ("personal", "refused:internal")
+    assert outcomes(metrics) == ["refused:internal"]
+    assert "secret detail" not in json.dumps(event)
+    assert any(r.exc_info and r.name == "mail_actions.actions" for r in caplog.records)
+    assert actions.capabilities().archive_enabled is False
 
 
 def test_ensure_protected_with_an_empty_list_leaves_existing_protected_filters_alone(

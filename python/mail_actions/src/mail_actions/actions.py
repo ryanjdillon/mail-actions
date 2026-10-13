@@ -255,6 +255,10 @@ class MailboxActions:
             result = SyncResult(ok=False, mailbox=str(mailbox)[:32], reason=exc.reason)
         except ProviderError as exc:
             result = SyncResult(ok=False, mailbox=mailbox, reason=f"provider:{exc.reason}")
+        except Exception:
+            # Fail closed with a fixed reason, as for message calls.
+            log.exception("unexpected error in sync_filters")
+            result = SyncResult(ok=False, mailbox=str(mailbox)[:32], reason="internal")
         self._record(
             start,
             {
@@ -280,9 +284,20 @@ class MailboxActions:
         next ``file``. Approved rules are left as they are. A mailbox whose pass
         fails stays pending, and ``file`` there only labels until it completes.
         """
+        start = time.perf_counter()
         try:
             protected = self._protected.current()
         except ConfigError:
+            self._record(
+                start,
+                {
+                    "event": "mail_actions.tool_call",
+                    "tool": "ensure_protected",
+                    "principal": principal,
+                    "mailbox": None,
+                    "outcome": "refused:protected_list_invalid",
+                },
+            )
             return
         for name, provider in self._providers.items():
             start = time.perf_counter()
@@ -291,6 +306,10 @@ class MailboxActions:
                 self._protect_existing(name, provider, protected)
             except ProviderError as exc:
                 outcome = f"refused:provider:{exc.reason}"
+            except Exception:
+                # The mailbox stays pending, so ``file`` there only labels.
+                log.exception("unexpected error in ensure_protected")
+                outcome = "refused:internal"
             self._record(
                 start,
                 {
